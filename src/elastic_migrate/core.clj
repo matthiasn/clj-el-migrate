@@ -2,10 +2,8 @@
   (:require [clojurewerkz.elastisch.rest :as esr]
             [clojurewerkz.elastisch.rest.document :as esd]
             [clojurewerkz.elastisch.query :as q]
-                       [clojurewerkz.elastisch.rest.index         :as idx]
             [clojurewerkz.elastisch.rest.response :as esrsp]
             [clojurewerkz.elastisch.rest.bulk :as bulk]
-            [clojure.pprint :as pp]
             [clj-time.core :as tc]
             [clj-time.format :as tf]))
 
@@ -18,7 +16,7 @@
 
 (defn batch-insert [ops]
   (let [insert-operations (bulk/bulk-index ops)]
-    (bulk/bulk insert-operations :refresh true)                                         )
+    (bulk/bulk insert-operations :refresh true))
   [])
 
 (defn process-tweet [doc]
@@ -45,5 +43,6 @@
   [& args]
   (println (tf/unparse simple-formatter (tc/now)) "Processing started")
   (dorun (map process-tweet (lazy-find)))
+  (swap! insert-ops batch-insert)
   (printf "Processed %,d tweets in %,d seconds\n" @counter (tc/in-seconds (tc/interval started (tc/now)))))
 
