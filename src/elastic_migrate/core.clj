@@ -1,40 +1,35 @@
-(ns elastic-test.core
+(ns elastic-migrate.core
   (:require [clojurewerkz.elastisch.rest :as esr]
             [clojurewerkz.elastisch.rest.document :as esd]
             [clojurewerkz.elastisch.query :as q]
+                       [clojurewerkz.elastisch.rest.index         :as idx]
             [clojurewerkz.elastisch.rest.response :as esrsp]
+            [clojurewerkz.elastisch.rest.bulk :as bulk]
             [clojure.pprint :as pp]
             [clj-time.core :as tc]
             [clj-time.format :as tf]))
 
 (def counter (atom 0))
+(def insert-ops (atom []))
 (def started (tc/now))
-
-(def twitter-formatter (tf/formatter "E MMM dd HH:mm:ss Z yyyy"))
-(def el-formatter (tf/formatter "yyyyMMdd'T'HHmmssZ"))
 (def simple-formatter (tf/formatter "HH:mm:ss"))
 
-(defn date-format [s]
-  (if (nil? s)
-    nil
-    (tf/unparse el-formatter (tf/parse twitter-formatter s))))
-
 (esr/connect! "http://127.0.0.1:9200")
-(defn change-df [tweet]
-  (let [t1 (update-in tweet [:created_at] date-format)
-        t2 (update-in t1 [:user :created_at] date-format)
-        t3 (update-in t2 [:retweeted_status :created_at] date-format)
-        t4 (update-in t3 [:retweeted_status :user :created_at] date-format)]
-    t4))
+
+(defn batch-insert [ops]
+  (let [insert-operations (bulk/bulk-index ops)]
+    (bulk/bulk insert-operations :refresh true)                                         )
+  [])
 
 (defn process-tweet [doc]
   (let [tweet (:_source doc)
-        text (:text tweet)]
-    (esd/create "birdwatch_v2" "tweets" (change-df tweet))
+        for-index (assoc tweet :_index "birdwatch_v2" :_type "tweets" :_id (:id_str tweet))]
+    (swap! insert-ops conj for-index)
     (swap! counter inc)
-    (if (= (mod @counter 10000) 0) (println (tf/unparse simple-formatter (tc/now)) @counter "items processed"))
-    text
-    ))
+    (if (= (mod @counter 1000) 0)
+      (do
+        (swap! insert-ops batch-insert)
+        (println (tf/unparse simple-formatter (tc/now)) @counter "items processed")))))
 
 (defn lazy-find []
   (esd/scroll-seq
@@ -42,9 +37,6 @@
     "birdwatch_tech"
     "tweets"
     :query (q/match-all)
-;    :query (q/query-string :query "java"
-;                           :allow_leading_wildcard false
-;                           :default_operator "AND")
     :search_type "query_then_fetch"
     :scroll "10h"
     :size 1000)))
