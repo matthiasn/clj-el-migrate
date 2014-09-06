@@ -1,4 +1,5 @@
 (ns elastic-migrate.core
+  (:gen-class)
   (:require [clojurewerkz.elastisch.rest :as esr]
             [clojurewerkz.elastisch.rest.document :as esd]
             [clojurewerkz.elastisch.query :as q]
@@ -8,13 +9,15 @@
             [clj-time.format :as tf]))
 
 (def counter (atom 0))
+(def write-counter (atom 0))
 (def started (tc/now))
 (def simple-formatter (tf/formatter "HH:mm:ss"))
 
 (def conf {:es-address "http://127.0.0.1:9200"
-           :es-index "ferguson"})
+           :es-index "ferguson"
+           :mapping "tweet"})
 
-(esr/connect! "http://127.0.0.1:9200")
+(esr/connect! (:es-address conf))
 
 (defn get-tweet [id]
   "get Tweet for specified ID"
@@ -24,17 +27,17 @@
   (let [tweet (:_source doc)
         rt-status (:retweeted_status tweet)]
     (when (and rt-status (not (get-tweet (:id_str rt-status))))
-      (esd/put (:es-index conf) "tweet" (:id_str rt-status) rt-status))
+      (esd/put (:es-index conf) (:mapping conf) (:id_str rt-status) rt-status)
+      (swap! write-counter inc))
     (swap! counter inc)
     (if (= (mod @counter 1000) 0)
-      (do
-        (println (tf/unparse simple-formatter (tc/now)) @counter "items processed")))))
+      (println (tf/unparse simple-formatter (tc/now)) @counter "items processed -" @write-counter "written"))))
 
 (defn lazy-find []
   (esd/scroll-seq
    (esd/search
-    "ferguson"
-    "tweet"
+    (:es-index conf)
+    (:mapping conf)
     :query (q/match-all)
     :search_type "query_then_fetch"
     :sort {:id "desc"}
