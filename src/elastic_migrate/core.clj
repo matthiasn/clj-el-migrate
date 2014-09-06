@@ -8,41 +8,42 @@
             [clj-time.format :as tf]))
 
 (def counter (atom 0))
-(def insert-ops (atom []))
 (def started (tc/now))
 (def simple-formatter (tf/formatter "HH:mm:ss"))
 
+(def conf {:es-address "http://127.0.0.1:9200"
+           :es-index "ferguson"})
+
 (esr/connect! "http://127.0.0.1:9200")
 
-(defn batch-insert [ops]
-  (let [insert-operations (bulk/bulk-index ops)]
-    (bulk/bulk insert-operations :refresh true))
-  [])
+(defn get-tweet [id]
+  "get Tweet for specified ID"
+  (esd/get (:es-index conf) "tweet" id))
 
 (defn process-tweet [doc]
   (let [tweet (:_source doc)
-        for-index (assoc tweet :_index "birdwatch_v2" :_type "tweets" :_id (:id_str tweet))]
-    (swap! insert-ops conj for-index)
+        rt-status (:retweeted_status tweet)]
+    (when (and rt-status (not (get-tweet (:id_str rt-status))))
+      (esd/put (:es-index conf) "tweet" (:id_str rt-status) rt-status))
     (swap! counter inc)
     (if (= (mod @counter 1000) 0)
       (do
-        (swap! insert-ops batch-insert)
         (println (tf/unparse simple-formatter (tc/now)) @counter "items processed")))))
 
 (defn lazy-find []
   (esd/scroll-seq
    (esd/search
-    "birdwatch_tech"
-    "tweets"
+    "ferguson"
+    "tweet"
     :query (q/match-all)
     :search_type "query_then_fetch"
-    :scroll "10h"
+    :sort {:id "desc"}
+    :scroll "1h"
     :size 1000)))
 
 (defn -main
   [& args]
   (println (tf/unparse simple-formatter (tc/now)) "Processing started")
   (dorun (map process-tweet (lazy-find)))
-  (swap! insert-ops batch-insert)
   (printf "Processed %,d tweets in %,d seconds\n" @counter (tc/in-seconds (tc/interval started (tc/now)))))
 
